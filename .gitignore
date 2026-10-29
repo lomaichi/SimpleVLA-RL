@@ -131,3 +131,7 @@ tests/e2e/toy_examples/deepspeed/synchronous/output.txt
 logs
 log
 outputs
+
+# Local-only: upstream veRL clone (unused by the run scripts) and model weights
+/examples/verl/
+/models/

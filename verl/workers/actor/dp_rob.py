@@ -144,15 +144,20 @@ class RobDataParallelPPOActor(BasePPOActor):
             attention_mask_unpad, _ = self.process_tensor(attention_mask, 0)
             
             if self.config.vla == "openvla-oft":
-                logits = self.actor_module(input_ids=input_ids_unpad,
-                                        attention_mask=attention_mask_unpad,
-                                        pixel_values=pixel_values,
-                                        proprio=proprio,
-                                        )  # prevent model thinks we are generating
-                
+                # Forward traj_mini_batch_size steps at a time (as update_policy does); a whole
+                # trajectory (~64 steps) in one forward does not fit on a single 32 GB GPU
+                chunk = self.config.traj_mini_batch_size
+                logits = torch.cat([
+                    self.actor_module(input_ids=input_ids_unpad[i:i + chunk],
+                                      attention_mask=attention_mask_unpad[i:i + chunk],
+                                      pixel_values=pixel_values[i:i + chunk],
+                                      proprio=proprio[i:i + chunk] if proprio is not None else None,
+                                      )[..., -256-64:-64]  # prevent model thinks we are generating
+                    for i in range(0, input_ids_unpad.size(0), chunk)
+                ], dim=0)  # Shape: [batch_size, seq_len, 256]
+
                 assert self.actor_module.vocab_size == 32000
-                start_index = self.actor_module.vocab_size - 256 
-                logits = logits[..., -256-64:-64]  # Shape: [batch_size, seq_len, 256]
+                start_index = self.actor_module.vocab_size - 256
                 responses = responses - start_index
                 #assert (0<=responses<=255).all()
             
@@ -291,16 +296,20 @@ class RobDataParallelPPOActor(BasePPOActor):
             attention_mask_unpad, _ = self.process_tensor(attention_mask, 0)
 
             if  self.config.vla == "openvla-oft":
-            
-                logits = self.actor_module(input_ids=input_ids_unpad,
-                                                attention_mask=attention_mask_unpad,
-                                                pixel_values=pixel_values,
-                                                proprio=proprio,
-                                                ) 
-            
+
+                # Forward traj_mini_batch_size steps at a time, as in _forward_micro_batch (32 GB GPU)
+                chunk = self.config.traj_mini_batch_size
+                logits = torch.cat([
+                    self.actor_module(input_ids=input_ids_unpad[i:i + chunk],
+                                      attention_mask=attention_mask_unpad[i:i + chunk],
+                                      pixel_values=pixel_values[i:i + chunk],
+                                      proprio=proprio[i:i + chunk] if proprio is not None else None,
+                                      )[..., -256-64:-64]
+                    for i in range(0, input_ids_unpad.size(0), chunk)
+                ], dim=0)  # Shape: [batch_size, seq_len, 256]
+
                 assert self.actor_module.vocab_size == 32000
-                start_index = self.actor_module.vocab_size - 256 
-                logits = logits[..., -256-64:-64]  # Shape: [batch_size, seq_len, 256]
+                start_index = self.actor_module.vocab_size - 256
             
                 logits = logits.div(temperature) 
             

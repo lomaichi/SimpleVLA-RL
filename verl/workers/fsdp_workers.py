@@ -230,7 +230,9 @@ class RobActorRolloutRefWorker(Worker):
             actor_module.to(torch_dtype)
 
             if enable_gradient_checkpointing:
-                actor_module.gradient_checkpointing_enable()
+                # Non-reentrant: with LoRA the frozen layers' inputs don't require grad, and reentrant
+                # checkpointing (the transformers default) would then silently drop the adapters' gradients
+                actor_module.gradient_checkpointing_enable(gradient_checkpointing_kwargs={'use_reentrant': False})
             # lora add
             if self._is_lora:
                 print("Applying LoRA to actor module")
@@ -243,7 +245,12 @@ class RobActorRolloutRefWorker(Worker):
                     'target_modules': convert_to_regular_types(self.config.model.target_modules),
                     'init_lora_weights': "gaussian"
                 }
-                actor_module = get_peft_model(actor_module, LoraConfig(**lora_config))  
+                actor_module = get_peft_model(actor_module, LoraConfig(**lora_config))
+                # peft creates adapters in the base layer's dtype; keep trainable params (and optimizer states) in fp32
+                # when the frozen base is loaded in bf16. Each LoRA leaf is its own FSDP unit, so dtypes stay uniform per unit.
+                for param in actor_module.parameters():
+                    if param.requires_grad:
+                        param.data = param.data.float()
                 actor_module.print_trainable_parameters()
             # lora end
                 

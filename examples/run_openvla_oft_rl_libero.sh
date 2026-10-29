@@ -1,25 +1,48 @@
 set -x
 
-export NCCL_DEBUG=WARN 
-export WANDB_API_KEY='YOUR WANDB KEY'
+# Isolated env (torch 2.7.1+cu128 for RTX 5090 / sm_120, robosuite 1.4.1 for LIBERO); see DEPENDENCY_CHANGES.md
+source /opt/simplevla/.venv/bin/activate
+# Run from the repo root so `python -m verl...` (and Ray workers) import SimpleVLA-RL's verl, not upstream veRL
+cd "$(dirname "$(readlink -f "$0")")/.."
+export PYTHONPATH="$(pwd):${PYTHONPATH}"
+# torch>=2.6 defaults torch.load(weights_only=True); LIBERO's *.pruned_init files need the old behaviour
+export TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1
+# Container has pids.max=2048; Ray prestarting one worker per CPU (32) exhausts it ("thread: Resource temporarily unavailable")
+export RAY_prestart_worker_first_driver=0
+export RAY_enable_worker_prestart=0
+# CPU rendering for LIBERO. EGL (GPU) is ~7x faster per sim step, but env creation failed with EGL_BAD_ALLOC
+# during RL rollouts (likely GPU memory contention). Try MUJOCO_GL=egl / PYOPENGL_PLATFORM=egl when the GPU is not shared.
+export MUJOCO_GL=osmesa
+export PYOPENGL_PLATFORM=osmesa
+
+export NCCL_DEBUG=WARN
+export WANDB_API_KEY='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'
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export TOKENIZERS_PARALLELISM=true
 export CUDA_LAUNCH_BLOCKING=1
 export TORCH_USE_CUDA_DSA=1
-export ROBOT_PLATFORM=LIBERO # Use LIBERO: ROBOT_PLATFORM=LIBERO  Use Robotwin ROBOT_PLATFORM=ALOHA
+export ROBOT_PLATFORM=LIBERO  # Use LIBERO: ROBOT_PLATFORM=LIBERO  Use Robotwin ROBOT_PLATFORM=ALOHA
 PROJECT_NAME='SimpleVLA-RL'
-EXPERIMENT_NAME='MODIFIED YOURSELF e.g. vla-lib10_model10j_lr10_tmp16_nsample8_clip08-128_batch64_ppominibs128_node2' 
+EXPERIMENT_NAME="openvla-oft_libero10_lora"
 # For openvla-oft Libero-Long traj1 SFT or traj all SFT models can be find in https://huggingface.co/collections/Haozhan72/simplevla-rl-6833311430cd9df52aeb1f86
-SFT_MODEL_PATH="YOUR SFT_MODEL_PATH"
-CKPT_PATH="THE PATH YOU WANT TO SAVE YOUR CKPT"
+SFT_MODEL_PATH="/home/DockerShared/ECE780/SimpleVLA-RL/models/Openvla-oft-SFT-libero10-traj1"
+CKPT_PATH="/home/DockerShared/ECE780/SimpleVLA-RL/examples/trained_checkpoints"
 # DATASET_NAME can be libero_10 (libero_Long), libero_90, libero_spatial, libero_object, libero_goal
 DATASET_NAME="libero_10"
 VLA_NAME="openvla-oft"
-NUM_GPUS=8
+NUM_GPUS=1
 # If you want to use 2*8 GPU to RL. Set NUM_NODES=2
 NUM_NODES=1 
-ALIGN_PATH="YOUR PATH TO SimpleVLA-RL/align.json"
-bash examples/overwrite_vla_ckpt_utils.sh $SFT_MODEL_PATH 
+ALIGN_PATH="$(pwd)/align.json"
+# LoRA RL (single 32 GB GPU): frozen base loaded in bf16 (~15 GB), only LoRA adapters trained (kept in fp32).
+# Full fine-tuning needs ~120 GB (fp32 weights + grads + Adam) and does not fit.
+LORA_RANK=32
+LORA_ALPHA=32
+# LoRA usually needs a higher LR than full fine-tuning (the original full-FT script used 5e-6); tune as needed
+LR=5e-5
+# log_prob_micro_batch_size is per-node and gets divided by NUM_GPUS. Each micro-batch must hold trajectories
+# of a single task (same prompt padding, else dp_rob.py raises "Padding error!"), so the per-GPU value must divide n_samples.
+bash /home/DockerShared/ECE780/SimpleVLA-RL/examples/overwrite_vla_ckpt_utils.sh $SFT_MODEL_PATH 
 
 HYDRA_FULL_ERROR=1 python -u -m verl.trainer.main_ppo \
     data.task_suite_name=$DATASET_NAME \
@@ -37,7 +60,10 @@ HYDRA_FULL_ERROR=1 python -u -m verl.trainer.main_ppo \
     actor_rollout_ref.model.vla=$VLA_NAME \
     actor_rollout_ref.model.action_token_len=7 \
     actor_rollout_ref.model.action_chunks_len=8 \
-    actor_rollout_ref.actor.optim.lr=5e-6 \
+    actor_rollout_ref.model.lora_rank=$LORA_RANK \
+    actor_rollout_ref.model.lora_alpha=$LORA_ALPHA \
+    +actor_rollout_ref.actor.fsdp_config.model_dtype=bf16 \
+    actor_rollout_ref.actor.optim.lr=$LR \
     actor_rollout_ref.actor.optim.warmup_style=constant \
     actor_rollout_ref.actor.ppo_mini_batch_size=128 \
     actor_rollout_ref.actor.ppo_micro_batch_size=$NUM_GPUS \
@@ -50,7 +76,7 @@ HYDRA_FULL_ERROR=1 python -u -m verl.trainer.main_ppo \
     actor_rollout_ref.actor.clip_ratio_low=0.2 \
     actor_rollout_ref.actor.num_images_in_input=1 \
     actor_rollout_ref.actor.traj_mini_batch_size=16 \
-    actor_rollout_ref.model.enable_gradient_checkpointing=False \
+    actor_rollout_ref.model.enable_gradient_checkpointing=True \
     actor_rollout_ref.model.use_remove_padding=False \
     actor_rollout_ref.actor.entropy_coeff=0. \
     actor_rollout_ref.rollout.num_images_in_input=1 \
@@ -66,7 +92,7 @@ HYDRA_FULL_ERROR=1 python -u -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.pretrained_checkpoint=$SFT_MODEL_PATH \
     actor_rollout_ref.rollout.center_crop=True \
     actor_rollout_ref.rollout.max_prompt_length=512 \
-    actor_rollout_ref.rollout.log_prob_micro_batch_size=32 \
+    actor_rollout_ref.rollout.log_prob_micro_batch_size=$NUM_GPUS \
     actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
     actor_rollout_ref.rollout.name=hf \
     actor_rollout_ref.rollout.gpu_memory_utilization=0.9 \

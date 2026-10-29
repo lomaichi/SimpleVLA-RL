@@ -346,8 +346,8 @@ def env_worker(task_name, task_id, trial_id, config, input_queue, output_queue, 
         try:
             env, task_description = get_libero_env(task, config.model_family, resolution=256)
             break
-        except:
-            print(f"*** env initialization failed ***")
+        except Exception as e:
+            print(f"*** env initialization failed: {type(e).__name__}: {e} ***", flush=True)
             if env is not None:
                 try:
                     env.close()

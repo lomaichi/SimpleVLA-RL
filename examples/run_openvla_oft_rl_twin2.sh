@@ -1,19 +1,19 @@
 set -x
 
 export NCCL_DEBUG=WARN 
-export WANDB_API_KEY='YOUR WANDB KEY'
+export WANDB_API_KEY='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'
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export TOKENIZERS_PARALLELISM=true
 export CUDA_LAUNCH_BLOCKING=1
 export TORCH_USE_CUDA_DSA=1
 export ROBOT_PLATFORM=ALOHA  # Use LIBERO: ROBOT_PLATFORM=LIBERO  Use Robotwin ROBOT_PLATFORM=ALOHA
 PROJECT_NAME='SimpleVLA-RL'
-EXPERIMENT_NAME='MODIFIED YOURSELF e.g. twin2_lift_pot_sft1k_rl_tmp16_clip08-128_batch64' 
+EXPERIMENT_NAME="openvla-oft_libero10"
 # For openvla-oft Libero-Long traj1 SFT or traj all SFT models can be find in https://huggingface.co/collections/Haozhan72/simplevla-rl-6833311430cd9df52aeb1f86
-SFT_MODEL_PATH="YOUR SFT_MODEL_PATH"
-CKPT_PATH="THE PATH YOU WANT TO SAVE YOUR CKPT"
+SFT_MODEL_PATH="/home/DockerShared/ECE780/SimpleVLA-RL/models"
+CKPT_PATH="/home/DockerShared/ECE780/SimpleVLA-RL/examples/trained_checkpoints"
 # Currently Supported DATASET_NAME tasks for robotwin2.0 can be found at examples/robotwin2_tasks_info.txt
-DATASET_NAME=TASK_NAME_YOU_SELECT
+DATASET_NAME=LIBERO
 TRAJ_MINI_BATCH_SIZE=8 #NEED TO CHECK! The specific values are in examples/robotwin2_tasks_info.txt
 VLA_NAME="openvla-oft"
 NUM_GPUS=8
